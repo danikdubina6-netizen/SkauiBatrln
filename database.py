@@ -53,4 +53,11 @@ def ban_user(user_id: int):
     cursor.execute("INSERT OR IGNORE INTO bans (user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
+
+def unban_user(user_id: int):
+    conn = sqlite3.connect("bridge_bot.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM bans WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
     
