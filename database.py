@@ -3,39 +3,42 @@ import sqlite3
 def init_db():
     conn = sqlite3.connect("bridge_bot.db")
     cursor = conn.cursor()
-    # Таблица связывает ID сообщения у получателя с ID реального отправителя
+    
+    # Таблица для связки сообщения админа с ID пользователя
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            target_msg_id INTEGER,
-            sender_id INTEGER,
-            recipient_id INTEGER
+            admin_msg_id INTEGER,
+            user_id INTEGER
         )
     """)
+    
+    # Таблица для заблокированных пользователей
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bans (
             user_id INTEGER PRIMARY KEY
         )
     """)
+    
     conn.commit()
     conn.close()
 
-def save_bridge(target_msg_id: int, sender_id: int, recipient_id: int):
+def save_message(admin_msg_id: int, user_id: int):
     conn = sqlite3.connect("bridge_bot.db")
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO messages (target_msg_id, sender_id, recipient_id) VALUES (?, ?, ?)",
-        (target_msg_id, sender_id, recipient_id)
+        "INSERT INTO messages (admin_msg_id, user_id) VALUES (?, ?)",
+        (admin_msg_id, user_id)
     )
     conn.commit()
     conn.close()
 
-def get_original_sender(target_msg_id: int, recipient_id: int):
+def get_user_by_admin_msg(admin_msg_id: int):
     conn = sqlite3.connect("bridge_bot.db")
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT sender_id FROM messages WHERE target_msg_id = ? AND recipient_id = ?",
-        (target_msg_id, recipient_id)
+        "SELECT user_id FROM messages WHERE admin_msg_id = ?",
+        (admin_msg_id,)
     )
     row = cursor.fetchone()
     conn.close()
@@ -48,4 +51,11 @@ def is_banned(user_id: int) -> bool:
     row = cursor.fetchone()
     conn.close()
     return row is not None
+
+def ban_user(user_id: int):
+    conn = sqlite3.connect("bridge_bot.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO bans (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+    conn.close()
     
