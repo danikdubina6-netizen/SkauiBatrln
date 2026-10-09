@@ -1,10 +1,10 @@
 import os
 import asyncio
 import logging
+import aiohttp
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-import yt_dlp
 
 TOKEN = "8762582086:AAHSujA_gAP3kUnlOCGMcf3gv9puRbqm3vo"
 
@@ -12,50 +12,10 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-def download_media(url: str, mode: str = "video") -> str:
-    ydl_opts = {
-        'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'noplaylist': True,
-        'geo_bypass': True,
-        'nocheckcertificate': True,
-        'socket_timeout': 30,
-        # Настройки эмуляции мобильного клиента для обхода блокировок IP GitHub
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'mweb', 'android'],
-            }
-        },
-        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
-    }
-    
-    if mode == "audio":
-        ydl_opts.update({
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        })
-    else:
-        ydl_opts.update({
-            'format': 'best[ext=mp4]/best/bestvideo+bestaudio/best',
-        })
-
-    os.makedirs('downloads', exist_ok=True)
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        if mode == "audio":
-            base, _ = os.path.splitext(filename)
-            filename = base + ".mp3"
-        return filename
-
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "Йоу! ✌️ Бот готов к работе. "
+        "Йоу! ✌️ Бот переведен на быстрое API. "
         "Кидай ссылку на **YouTube**, **TikTok** или **Instagram**!"
     )
 
@@ -65,38 +25,74 @@ async def handle_url(message: types.Message):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎥 Видео", callback_data=f"vid|{url}"),
-            InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data=f"aud|{url}")
+            InlineKeyboardButton(text="🎥 Скачать видео", callback_data=f"get|{url}")
         ]
     ])
     
-    await message.answer("В каком формате забрать контент?", reply_markup=keyboard)
+    await message.answer("Жми кнопку, чтобы забрать видос без ошибок облака:", reply_markup=keyboard)
 
-@dp.callback_query(F.data.startswith(("vid|", "aud|")))
+@dp.callback_query(F.data.startswith("get|"))
 async def process_download(callback: types.CallbackQuery):
-    action, url = callback.data.split("|", 1)
-    mode = "video" if action == "vid" else "audio"
-    
-    await callback.message.edit_text("⏳ Качаю с обходом защиты, секунду...")
+    _, url = callback.data.split("|", 1)
+    await callback.message.edit_text("⏳ Получаю прямую ссылку через API...")
     
     try:
-        loop = asyncio.get_running_loop()
-        file_path = await loop.run_in_executor(None, download_media, url, mode)
+        # Используем публичный открытый сервис-агрегатор для скачивания
+        api_url = f"https://tikwm.com/api/?url={url}" # Универсальный шлюз
         
-        await callback.message.edit_text("📤 Загружаю файл в Telegram...")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url) as resp:
+                data = await resp.json()
+                
+                if data.get("code") == 0 and "data" in data:
+                    video_url = data["data"].get("play") or data["data"].get("url")
+                    
+                    if video_url:
+                        await callback.message.edit_text("📤 Скачиваю и отправляю в телегу...")
+                        
+                        # Скачиваем файл во временную зону
+                        file_path = "downloads/temp_video.mp4"
+                        os.makedirs("downloads", exist_ok=True)
+                        
+                        async with session.get(video_url) as vid_resp:
+                            with open(file_path, "wb") as f:
+                                f.write(await vid_resp.read())
+                                
+                        file = FSInputFile(file_path)
+                        await callback.message.answer_video(file)
+                        
+                        os.remove(file_path)
+                        await callback.message.delete()
+                        return
+
+        # Если универсальный метод не сработал для ютуба, шлем запасной вариант через cobalt.tools API (одно из лучших открытых API)
+        cobalt_api = "https://api.cobalt.tools/api/json"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        payload = {"url": url}
         
-        file = FSInputFile(file_path)
-        if mode == "video":
-            await callback.message.answer_video(file)
-        else:
-            await callback.message.answer_audio(file)
-            
-        os.remove(file_path)
-        await callback.message.delete()
-        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(cobalt_api, json=payload, headers=headers) as resp:
+                res = await resp.json()
+                if "url" in res:
+                    await callback.message.edit_text("📤 Загружаю с Cobalt API...")
+                    file_path = "downloads/cobalt_video.mp4"
+                    os.makedirs("downloads", exist_ok=True)
+                    
+                    async with session.get(res["url"]) as vid_resp:
+                        with open(file_path, "wb") as f:
+                            f.write(await vid_resp.read())
+                            
+                    file = FSInputFile(file_path)
+                    await callback.message.answer_video(file)
+                    os.remove(file_path)
+                    await callback.message.delete()
+                    return
+
+        await callback.message.edit_text("❌ Не удалось вытянуть медиа через API. Попробуй другую ссылку.")
+
     except Exception as e:
         logging.error(f"Error: {e}")
-        await callback.message.edit_text(f"❌ Ошибка скачивания: платформа отклонила запрос с облачного сервера.")
+        await callback.message.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
 async def main():
     await dp.start_polling(bot)
