@@ -57,7 +57,7 @@ async def handle_user_message(message: types.Message):
     # Копируем контент администратору в ЛС
     copied_msg = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем связку для ответа (привязываем к инфо-сообщению с кнопкой или скопированному)
+    # Сохраняем связку для ответа
     save_message(copied_msg.message_id, user_id)
     save_message(info_msg.message_id, user_id)
 
@@ -68,7 +68,6 @@ async def process_ban_callback(callback: types.CallbackQuery):
         await callback.answer("⛔ Эта кнопка не для вас!", show_alert=True)
         return
 
-    # Достаем user_id из callback_data (например, "ban_12345678")
     target_user_id = int(callback.data.split("_")[1])
     
     # Баним в базе
@@ -81,7 +80,7 @@ async def process_ban_callback(callback: types.CallbackQuery):
             "🚫 Топяк заблокировал вас, любое ваше сообщение — уйдут в пустоту."
         )
     except Exception:
-        pass  v  # Если юзер заблокировал бота или удалил чат
+        pass  # Если юзер заблокировал бота или удалил чат
 
     # Обновляем сообщение у админа (убираем кнопку и пишем, что заблокирован)
     await callback.message.edit_text(
