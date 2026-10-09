@@ -42,7 +42,7 @@ async def cmd_ban(message: types.Message):
     else:
         await message.answer("⚠️ Эту команду нужно отправлять «реплаем» (в ответ) на сообщение.")
 
-# Прием любых сообщений от обычных юзеров и пересылка админу
+# Прием сообщений от обычных пользователей и пересылка админу
 @dp.message(F.from_user.id != ADMIN_ID)
 async def handle_user_message(message: types.Message):
     user_id = message.from_user.id
