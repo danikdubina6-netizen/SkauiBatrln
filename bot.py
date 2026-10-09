@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database import init_db, save_message, get_user_by_admin_msg, is_banned, ban_user
+from database import init_db, save_message, get_user_by_admin_msg, is_banned, ban_user, unban_user
 
 TOKEN = "8870589631:AAEWag-OdsFc9ebYCgclYIjKv1a7cKVhJCA"
 ADMIN_ID = 7725909693  # Твой ID (@Topyak1)
@@ -27,7 +27,7 @@ async def cmd_start(message: types.Message):
         parse_mode="Markdown"
     )
 
-# Прием сообщений от пользователей и пересылка администратору @Topyak1 с кнопкой бана
+# Прием сообщений от пользователей и пересылка администратору @Topyak1
 @dp.message(F.from_user.id != ADMIN_ID)
 async def handle_user_message(message: types.Message):
     user_id = message.from_user.id
@@ -40,11 +40,10 @@ async def handle_user_message(message: types.Message):
     
     username_info = f"@{message.from_user.username}" if message.from_user.username else "скрыт"
     
-    # Создаем инлайн-кнопку для блокировки этого конкретного юзера
+    # Кнопка блокировки
     builder = InlineKeyboardBuilder()
     builder.button(text="🚫 Заблокировать контакт", callback_data=f"ban_{user_id}")
     
-    # Шапка-уведомление для администратора с кнопкой
     info_msg = await bot.send_message(
         ADMIN_ID, 
         f"📩 <b>Новое анонимное сообщение для @Topyak1!</b>\n"
@@ -54,40 +53,69 @@ async def handle_user_message(message: types.Message):
         reply_markup=builder.as_markup()
     )
     
-    # Копируем контент администратору в ЛС
     copied_msg = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем связку для ответа
     save_message(copied_msg.message_id, user_id)
     save_message(info_msg.message_id, user_id)
 
-# Обработка нажатия кнопки блокировки (строго только для ADMIN_ID)
-@dp.callback_query(F.data.startswith("ban_"))
-async def process_ban_callback(callback: types.CallbackQuery):
+# Обработка кнопок банов/разбанов
+@dp.callback_query(F.data.startswith(("ban_", "unban_")))
+async def process_mod_callback(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ Эта кнопка не для вас!", show_alert=True)
         return
 
-    target_user_id = int(callback.data.split("_")[1])
+    action, user_id_str = callback.data.split("_")
+    target_user_id = int(user_id_str)
     
-    # Баним в базе
-    ban_user(target_user_id)
-    
-    # Уведомляем пользователя мгновенно в ЛС
-    try:
-        await bot.send_message(
-            target_user_id, 
-            "🚫 Топяк заблокировал вас, любое ваше сообщение — уйдут в пустоту."
-        )
-    except Exception:
-        pass  # Если юзер заблокировал бота или удалил чат
+    builder = InlineKeyboardBuilder()
 
-    # Обновляем сообщение у админа (убираем кнопку и пишем, что заблокирован)
-    await callback.message.edit_text(
-        callback.message.text + "\n\n❌ <b>СТАТУС: Контакт заблокирован!</b>",
-        parse_mode="HTML"
-    )
-    await callback.answer("🚫 Пользователь успешно заблокирован!", show_alert=True)
+    if action == "ban":
+        ban_user(target_user_id)
+        
+        # Уведомляем пользователя о бане
+        try:
+            await bot.send_message(
+                target_user_id, 
+                "🚫 Топяк заблокировал вас, любое ваше сообщение — уйдут в пустоту."
+            )
+        except Exception:
+            pass
+
+        # Меняем кнопку на "Разблокировать"
+        builder.button(text="🔓 Разблокировать контакт", callback_data=f"unban_{target_user_id}")
+        
+        # Отредактируем плашку у админа
+        base_text = callback.message.html_text.split("\n\n❌")[0].split("\n\n🔓")[0]
+        await callback.message.edit_text(
+            f"{base_text}\n\n❌ <b>СТАТУС: Контакт заблокирован!</b>",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer("🚫 Пользователь заблокирован!", show_alert=True)
+
+    elif action == "unban":
+        unban_user(target_user_id)
+        
+        # Уведомляем пользователя о разбане
+        try:
+            await bot.send_message(
+                target_user_id, 
+                "🔓 Топяк вас официально разблокировал, можете ему снова писать — сообщение реально придет к нему"
+            )
+        except Exception:
+            pass
+
+        # Меняем кнопку обратно на "Заблокировать"
+        builder.button(text="🚫 Заблокировать контакт", callback_data=f"ban_{target_user_id}")
+        
+        base_text = callback.message.html_text.split("\n\n❌")[0].split("\n\n🔓")[0]
+        await callback.message.edit_text(
+            f"{base_text}\n\n🔓 <b>СТАТУС: Контакт разблокирован!</b>",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer("🔓 Пользователь разблокирован!", show_alert=True)
 
 # Ответ администратора (@Topyak1) пользователю через Reply
 @dp.message(F.from_user.id == ADMIN_ID, F.reply_to_message)
@@ -98,7 +126,7 @@ async def handle_admin_reply(message: types.Message):
         return
 
     if is_banned(target_user_id):
-        await message.answer("❌ Этот пользователь заблокирован. Сообщение не отправлено.")
+        await message.answer("❌ Этот пользователь заблокирован. Сначала разблокируйте его кнопкой.")
         return
 
     try:
