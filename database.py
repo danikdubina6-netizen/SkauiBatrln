@@ -8,8 +8,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             admin_msg_id INTEGER,
-            user_id INTEGER,
-            original_type TEXT
+            user_id INTEGER
         )
     """)
     # Таблица черного списка (антиспам/бан)
@@ -50,4 +49,4 @@ def ban_user(user_id: int):
     cursor.execute("INSERT OR IGNORE INTO bans (user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
-  
+    
