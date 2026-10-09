@@ -3,8 +3,6 @@ import sqlite3
 def init_db():
     conn = sqlite3.connect("bridge_bot.db")
     cursor = conn.cursor()
-    
-    # Таблица для связки сообщения админа с ID пользователя
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12,14 +10,11 @@ def init_db():
             user_id INTEGER
         )
     """)
-    
-    # Таблица для заблокированных пользователей
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bans (
             user_id INTEGER PRIMARY KEY
         )
     """)
-    
     conn.commit()
     conn.close()
 
