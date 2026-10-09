@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import subprocess
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,11 +14,16 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Функция для скачивания видео/аудио
 def download_media(url: str, mode: str = "video") -> str:
+    # Параметры для стабильного скачивания и обхода блокировок
     ydl_opts = {
         'outtmpl': 'downloads/%(id)s.%(ext)s',
         'noplaylist': True,
+        'geo_bypass': True,
+        'nocheckcertificate': True,
+        'socket_timeout': 30,
+        # Используем клиент для мобилок или iOS, чтобы ютуб реже кидал ошибки
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
     }
     
     if mode == "audio":
@@ -31,7 +37,7 @@ def download_media(url: str, mode: str = "video") -> str:
         })
     else:
         ydl_opts.update({
-            'format': 'best[ext=mp4]/best',
+            'format': 'best[ext=mp4]/best/bestvideo+bestaudio/best',
         })
 
     os.makedirs('downloads', exist_ok=True)
@@ -40,7 +46,6 @@ def download_media(url: str, mode: str = "video") -> str:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
         if mode == "audio":
-            # Исправляем расширение после конвертации в mp3
             base, _ = os.path.splitext(filename)
             filename = base + ".mp3"
         return filename
@@ -84,17 +89,18 @@ async def process_download(callback: types.CallbackQuery):
         else:
             await callback.message.answer_audio(file)
             
-        # Удаляем файл после отправки
         os.remove(file_path)
         await callback.message.delete()
         
     except Exception as e:
         logging.error(f"Error: {e}")
-        await callback.message.edit_text("❌ Ошибка при скачивании: с ссылкой что-то не так или платформа блокирует запрос.")
+        await callback.message.edit_text("❌ Ошибка при скачивании: YouTube блокирует IP GitHub. Попробуй другую ссылку или TikTok/Инсту.")
 
 async def main():
+    # Автоматически обновляем yt_dlp до последней версии при старте бота
+    subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-  
+    
