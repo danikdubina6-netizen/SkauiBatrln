@@ -1,12 +1,11 @@
-import os
 import asyncio
 import logging
-import aiohttp
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from database import init_db, save_message, get_user_by_admin_msg, is_banned, ban_user
 
-TOKEN = "8762582086:AAHSujA_gAP3kUnlOCGMcf3gv9puRbqm3vo"
+TOKEN = "8870589631:AAEWag-OdsFc9ebYCgclYIjKv1a7cKVhJCA"
+ADMIN_ID = 123456789  # ⚠️ ЗАМЕНИ ЭТО ЧИСЛО НА СВОЙ ТЕЛЕГРАМ ID
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -14,84 +13,74 @@ dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    if is_banned(message.from_user.id):
+        return
     await message.answer(
-        "Йоу! ✌️ Бот для TikTok и Instagram через API на связи.\n"
-        "Кидай ссылку — заберем в видео или аудио!"
+        "Привет! 🥷 Это полностью анонимный бот.\n\n"
+        "Напиши сюда любое сообщение, отправь фото, голосовое или кружочек — "
+        "и оно анонимно уйдет администратору!"
     )
 
-@dp.message(F.text.startswith("http"))
-async def handle_url(message: types.Message):
-    url = message.text.strip()
-    
-    if "youtube.com" in url or "youtu.be" in url:
-        await message.answer("❌ Ютуб отключен. Используй только TikTok или Instagram!")
+# Команда бана: отправь в ответ на сообщение пользователя /ban
+@dp.message(Command("ban"))
+async def cmd_ban(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
         return
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎥 Видео", callback_data=f"vid|{url}"),
-            InlineKeyboardButton(text="🎵 Аудио (MP3)", callback_data=f"aud|{url}")
-        ]
-    ])
-    
-    await message.answer("В каком формате забрать контент?", reply_markup=keyboard)
+    if message.reply_to_message:
+        target_user_id = get_user_by_admin_msg(message.reply_to_message.message_id)
+        if target_user_id:
+            ban_user(target_user_id)
+            await message.answer(f"🚫 Пользователь с ID `{target_user_id}` заблокирован в боте.")
+        else:
+            await message.answer("❌ Не удалось найти автора этого сообщения в базе.")
+    else:
+        await message.answer("⚠️ Эту команду нужно отправлять «реплаем» (в ответ) на сообщение.")
 
-@dp.callback_query(F.data.startswith(("vid|", "aud|")))
-async def process_download(callback: types.CallbackQuery):
-    action, url = callback.data.split("|", 1)
-    mode = "video" if action == "vid" else "audio"
+# Прием любых сообщений от обычных юзеров и пересылка админу
+@dp.message(F.from_user.id != ADMIN_ID)
+async def handle_user_message(message: types.Message):
+    user_id = message.from_user.id
+    if is_banned(user_id):
+        await message.answer("❌ Вы заблокированы в этом боте.")
+        return
+
+    # Реакция-подтверждение, что сообщение принято
+    await message.react([types.ReactionTypeEmoji(emoji="👍")])
     
-    await callback.message.edit_text("⏳ Запрашиваю файл через шлюз...")
+    # Пересылаем контент админу
+    forwarded = await message.forward(chat_id=ADMIN_ID)
     
+    # Сохраняем связку ID сообщения админа с ID юзера в базу
+    save_message(forwarded.message_id, user_id)
+    
+    # Информационная плашка для админа
+    username_info = f"@{message.from_user.username}" if message.from_user.username else "скрыт"
+    await bot.send_message(
+        ADMIN_ID, 
+        f"📩 <b>Анонимный вопрос</b>\n"
+        f"👤 Отправитель ID: <code>{user_id}</code> ({username_info})\n"
+        f"💡 <i>Ответь реплаем (ответом) на это сообщение, чтобы написать ему.</i>",
+        parse_mode="HTML"
+    )
+
+# Ответ администратора пользователю через Reply (ответ на сообщение)
+@dp.message(F.from_user.id == ADMIN_ID, F.reply_to_message)
+async def handle_admin_reply(message: types.Message):
+    target_user_id = get_user_by_admin_msg(message.reply_to_message.message_id)
+    
+    if not target_user_id:
+        return
+
     try:
-        # Используем мощный публичный API шлюз cobalt.tools для обхода блокировок
-        cobalt_api = "https://api.cobalt.tools/api/json"
-        headers = {
-            "Accept": "application/json", 
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
-        }
-        
-        # Если нужно аудио, просим кобальт выдать аудио напрямую, если нет — видео
-        payload = {
-            "url": url,
-            "downloadMode": "audio" if mode == "audio" else "auto"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(cobalt_api, json=payload, headers=headers) as resp:
-                res = await resp.json()
-                
-                download_url = res.get("url") or res.get("picker", [{}])[0].get("url")
-                
-                if not download_url:
-                    await callback.message.edit_text("❌ Не удалось получить ссылку на файл. Попробуй другую.")
-                    return
-                
-                await callback.message.edit_text("📤 Скачиваю и отправляю в Telegram...")
-                
-                ext = "mp3" if mode == "audio" else "mp4"
-                file_path = f"downloads/media.{ext}"
-                os.makedirs("downloads", exist_ok=True)
-                
-                async with session.get(download_url) as vid_resp:
-                    with open(file_path, "wb") as f:
-                        f.write(await vid_resp.read())
-                        
-                file = FSInputFile(file_path)
-                if mode == "video":
-                    await callback.message.answer_video(file)
-                else:
-                    await callback.message.answer_audio(file)
-                    
-                os.remove(file_path)
-                await callback.message.delete()
-                
+        # Копируем сообщение админа (текст, фото, видео, кружки, войсы) обратно пользователю
+        await message.copy_to(chat_id=target_user_id)
+        await message.react([types.ReactionTypeEmoji(emoji="✍️")])
     except Exception as e:
-        logging.error(f"Error: {e}")
-        await callback.message.edit_text("❌ Ошибка при обработке ссылки.")
+        await message.answer(f"❌ Не удалось отправить ответ пользователю: {e}")
 
 async def main():
+    init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
