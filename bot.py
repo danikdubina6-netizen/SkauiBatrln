@@ -19,11 +19,13 @@ def download_media(url: str, mode: str = "video") -> str:
         'geo_bypass': True,
         'nocheckcertificate': True,
         'socket_timeout': 30,
+        # Настройки эмуляции мобильного клиента для обхода блокировок IP GitHub
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['ios', 'mweb', 'android'],
             }
-        }
+        },
+        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
     }
     
     if mode == "audio":
@@ -53,7 +55,7 @@ def download_media(url: str, mode: str = "video") -> str:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "Йоу! ✌️ Бот на свежем движке готов к работе. "
+        "Йоу! ✌️ Бот готов к работе. "
         "Кидай ссылку на **YouTube**, **TikTok** или **Instagram**!"
     )
 
@@ -75,7 +77,7 @@ async def process_download(callback: types.CallbackQuery):
     action, url = callback.data.split("|", 1)
     mode = "video" if action == "vid" else "audio"
     
-    await callback.message.edit_text("⏳ Качаю, секунду...")
+    await callback.message.edit_text("⏳ Качаю с обходом защиты, секунду...")
     
     try:
         loop = asyncio.get_running_loop()
@@ -94,7 +96,7 @@ async def process_download(callback: types.CallbackQuery):
         
     except Exception as e:
         logging.error(f"Error: {e}")
-        await callback.message.edit_text(f"❌ Ошибка скачивания: проверь ссылку.")
+        await callback.message.edit_text(f"❌ Ошибка скачивания: платформа отклонила запрос с облачного сервера.")
 
 async def main():
     await dp.start_polling(bot)
