@@ -5,7 +5,7 @@ from aiogram.enums import ChatAction
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, MessageReactionUpdated, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from database import (
-    init_db, save_message, get_user_by_admin_msg,
+    init_db, save_message, get_user_by_admin_msg, get_user_msg_id,
     is_banned, ban_user, unban_user
 )
 
@@ -55,7 +55,7 @@ async def unban_handler(message: Message):
     except (IndexError, ValueError):
         await message.answer("Использование: /unban <USER_ID>")
 
-# Обработка нажатия на кнопку "Показать кто отправил"
+# Кнопка "Показать кто отправил"
 @dp.callback_query(F.data.startswith("reveal_"))
 async def reveal_callback(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -75,24 +75,29 @@ async def reveal_callback(callback: CallbackQuery):
 
     await callback.answer(info_text, show_alert=True)
 
-# Когда ТЫ ставишь реакцию -> сообщение отправляется ПОЛЬЗОВАТЕЛЮ
+# Когда ТЫ ставишь реакцию -> отправляем пользователю уведомление с цитатой его сообщения
 @dp.message_reaction()
 async def reaction_handler(reaction: MessageReactionUpdated):
-    # Проверяем, что реакцию поставил именно админ (ты)
     if reaction.chat.id == ADMIN_ID:
-        user_id = await get_user_by_admin_msg(reaction.message_id)
-        if user_id:
+        admin_msg_id = reaction.message_id
+        user_id = await get_user_by_admin_msg(admin_msg_id)
+        user_msg_id = await get_user_msg_id(admin_msg_id)
+
+        if user_id and user_msg_id:
             try:
                 new_reacts = reaction.new_reaction
                 if new_reacts:
                     emoji = getattr(new_reacts[0], "emoji", "👍")
-                    
-                    # Отправляем сообщение пользователю!
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text=f"Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение.",
-                        parse_mode="HTML"
-                    )
+                else:
+                    emoji = "👍"
+
+                # Отправляем пользователю уведомление с реплаем (цитатой) на его сообщение
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
+                    reply_to_message_id=user_msg_id,
+                    parse_mode="HTML"
+                )
             except Exception as e:
                 print(f"Ошибка отправки реакции пользователю: {e}")
 
@@ -125,7 +130,7 @@ async def main_message_handler(message: Message):
     await bot.send_chat_action(chat_id=ADMIN_ID, action=ChatAction.TYPING)
     await asyncio.sleep(1)
 
-    # 1. Кнопка "Показать кто отправил"
+    # 1. Кнопка "Показать кто отправил" В НАЧАЛЕ
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}")]
     ])
@@ -139,9 +144,9 @@ async def main_message_handler(message: Message):
     # 2. Пересылка самого сообщения
     forwarded = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем привязку для ответов и реакций
-    await save_message(admin_msg_id=forwarded.message_id, user_id=user_id)
-    await save_message(admin_msg_id=control_msg.message_id, user_id=user_id)
+    # Сохраняем связки в базу (включая оригинальный ID сообщения пользователя message.message_id)
+    await save_message(admin_msg_id=forwarded.message_id, user_id=user_id, user_msg_id=message.message_id)
+    await save_message(admin_msg_id=control_msg.message_id, user_id=user_id, user_msg_id=message.message_id)
 
 async def main():
     await init_db()
