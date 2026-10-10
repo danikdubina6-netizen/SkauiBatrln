@@ -55,7 +55,7 @@ async def unban_handler(message: Message):
     except (IndexError, ValueError):
         await message.answer("Использование: /unban <USER_ID>")
 
-# Кнопка "Показать кто отправил"
+# Кнопка "Показать кто отправил" (теперь с динамической кнопкой бана/разбана в сообщении)
 @dp.callback_query(F.data.startswith("reveal_"))
 async def reveal_callback(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -69,11 +69,53 @@ async def reveal_callback(callback: CallbackQuery):
         username_str = f"@{chat.username}" if chat.username else "нет юзернейма"
         name_str = chat.first_name or "Без имени"
         
-        info_text = f"👤 Отправитель:\nИмя: {name_str}\nЮзернейм: {username_str}\nID: {user_id}"
+        info_text = f"👤 <b>Информация об отправителе:</b>\nИмя: {name_str}\nЮзернейм: {username_str}\nID: {user_id}"
     except Exception:
-        info_text = f"👤 Отправитель:\nID: {user_id} (не удалось получить профиль)"
+        info_text = f"👤 <b>Информация об отправителе:</b>\nID: {user_id} (не удалось получить профиль)"
 
-    await callback.answer(info_text, show_alert=True)
+    # Проверяем статус блокировки
+    banned = await is_banned(user_id)
+    btn_text = "🔓 Разблокировать контакт" if banned else "🚫 Заблокировать контакт"
+    btn_action = f"toggleban_{user_id}"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=btn_text, callback_data=btn_action)]
+    ])
+
+    # Редактируем сообщение или шлем всплывающее окошко с клавиатурой под ним (отправим сообщением для удобства)
+    await callback.message.answer(info_text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+# Обработка нажатия на кнопку блокировки/разблокировки прямо из меню
+@dp.callback_query(F.data.startswith("toggleban_"))
+async def toggle_ban_callback(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Эта кнопка только для администратора!", show_alert=True)
+        return
+
+    user_id = int(callback.data.split("_")[1])
+    banned = await is_banned(user_id)
+
+    if banned:
+        await unban_user(user_id)
+        new_btn_text = "🚫 Заблокировать контакт"
+        alert_text = f" Пользователь {user_id} разблокирован."
+    else:
+        await ban_user(user_id)
+        new_btn_text = "🔓 Разблокировать контакт"
+        alert_text = f"🚷 Пользователь {user_id} заблокирован."
+
+    # Обновляем текст кнопки на ходу
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=new_btn_text, callback_data=f"toggleban_{user_id}")]
+    ])
+    
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        pass
+
+    await callback.answer(alert_text, show_alert=True)
 
 # Когда ТЫ ставишь реакцию -> отправляем пользователю уведомление с цитатой его сообщения
 @dp.message_reaction()
@@ -164,4 +206,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+                       
