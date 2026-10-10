@@ -6,7 +6,6 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import init_db, save_message, get_user_by_admin_msg, is_banned, ban_user, unban_user
 
-# Читаем токен из переменных окружения (GitHub Secrets)
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("❌ Ошибка: Переменная BOT_TOKEN не найдена в Secrets!")
@@ -19,7 +18,7 @@ dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    if is_banned(message.from_user.id):
+    if await is_banned(message.from_user.id):
         return
     await message.answer(
         "🥷 **Добро пожаловать в анонимный чат!**\n\n"
@@ -32,20 +31,17 @@ async def cmd_start(message: types.Message):
         parse_mode="Markdown"
     )
 
-# Прием сообщений от пользователей и пересылка администратору @Topyak1
 @dp.message(F.from_user.id != ADMIN_ID)
 async def handle_user_message(message: types.Message):
     user_id = message.from_user.id
-    if is_banned(user_id):
+    if await is_banned(user_id):
         await message.answer("❌ Вы заблокированы в этом боте.")
         return
 
-    # Реакция-подтверждение пользователю
     await message.react([types.ReactionTypeEmoji(emoji="👍")])
     
     username_info = f"@{message.from_user.username}" if message.from_user.username else "скрыт"
     
-    # Кнопка блокировки
     builder = InlineKeyboardBuilder()
     builder.button(text="🚫 Заблокировать контакт", callback_data=f"ban_{user_id}")
     
@@ -60,10 +56,9 @@ async def handle_user_message(message: types.Message):
     
     copied_msg = await message.copy_to(chat_id=ADMIN_ID)
     
-    save_message(copied_msg.message_id, user_id)
-    save_message(info_msg.message_id, user_id)
+    await save_message(copied_msg.message_id, user_id)
+    await save_message(info_msg.message_id, user_id)
 
-# Обработка кнопок банов/разбанов
 @dp.callback_query(F.data.startswith(("ban_", "unban_")))
 async def process_mod_callback(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -76,7 +71,7 @@ async def process_mod_callback(callback: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
 
     if action == "ban":
-        ban_user(target_user_id)
+        await ban_user(target_user_id)
         
         try:
             await bot.send_message(
@@ -97,7 +92,7 @@ async def process_mod_callback(callback: types.CallbackQuery):
         await callback.answer("🚫 Пользователь заблокирован!", show_alert=True)
 
     elif action == "unban":
-        unban_user(target_user_id)
+        await unban_user(target_user_id)
         
         try:
             await bot.send_message(
@@ -117,15 +112,15 @@ async def process_mod_callback(callback: types.CallbackQuery):
         )
         await callback.answer("🔓 Пользователь разблокирован!", show_alert=True)
 
-# Ответ администратора (@Topyak1) пользователю через Reply
 @dp.message(F.from_user.id == ADMIN_ID, F.reply_to_message)
 async def handle_admin_reply(message: types.Message):
-    target_user_id = get_user_by_admin_msg(message.reply_to_message.message_id)
+    target_user_id = await get_user_by_admin_msg(message.reply_to_message.message_id)
     
     if not target_user_id:
+        await message.answer("❌ Не удалось найти получателя. Возможно, сообщение было до подключения этой базы.")
         return
 
-    if is_banned(target_user_id):
+    if await is_banned(target_user_id):
         await message.answer("❌ Этот пользователь заблокирован. Сначала разблокируйте его кнопкой.")
         return
 
@@ -136,7 +131,8 @@ async def handle_admin_reply(message: types.Message):
         await message.answer(f"❌ Не удалось отправить ответ пользователю: {e}")
 
 async def main():
-    init_db()
+    await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
