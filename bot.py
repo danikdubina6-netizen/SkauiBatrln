@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
@@ -5,7 +6,11 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import init_db, save_message, get_user_by_admin_msg, is_banned, ban_user, unban_user
 
-TOKEN = "8870589631:AAEWag-OdsFc9ebYCgclYIjKv1a7cKVhJCA"
+# Читаем токен из переменных окружения (GitHub Secrets)
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("❌ Ошибка: Переменная BOT_TOKEN не найдена в Secrets!")
+
 ADMIN_ID = 7725909693  # Твой ID (@Topyak1)
 
 logging.basicConfig(level=logging.INFO)
@@ -73,7 +78,6 @@ async def process_mod_callback(callback: types.CallbackQuery):
     if action == "ban":
         ban_user(target_user_id)
         
-        # Уведомляем пользователя о бане
         try:
             await bot.send_message(
                 target_user_id, 
@@ -82,10 +86,8 @@ async def process_mod_callback(callback: types.CallbackQuery):
         except Exception:
             pass
 
-        # Меняем кнопку на "Разблокировать"
         builder.button(text="🔓 Разблокировать контакт", callback_data=f"unban_{target_user_id}")
         
-        # Отредактируем плашку у админа
         base_text = callback.message.html_text.split("\n\n❌")[0].split("\n\n🔓")[0]
         await callback.message.edit_text(
             f"{base_text}\n\n❌ <b>СТАТУС: Контакт заблокирован!</b>",
@@ -97,7 +99,6 @@ async def process_mod_callback(callback: types.CallbackQuery):
     elif action == "unban":
         unban_user(target_user_id)
         
-        # Уведомляем пользователя о разбане
         try:
             await bot.send_message(
                 target_user_id, 
@@ -106,7 +107,6 @@ async def process_mod_callback(callback: types.CallbackQuery):
         except Exception:
             pass
 
-        # Меняем кнопку обратно на "Заблокировать"
         builder.button(text="🚫 Заблокировать контакт", callback_data=f"ban_{target_user_id}")
         
         base_text = callback.message.html_text.split("\n\n❌")[0].split("\n\n🔓")[0]
