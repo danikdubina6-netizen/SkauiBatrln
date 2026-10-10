@@ -1,63 +1,52 @@
-import sqlite3
+import os
+import asyncpg
 
-def init_db():
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute("""
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+async def init_db():
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    await conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_msg_id INTEGER,
-            user_id INTEGER
-        )
-    """)
-    cursor.execute("""
+            id SERIAL PRIMARY KEY,
+            admin_msg_id BIGINT,
+            user_id BIGINT
+        );
         CREATE TABLE IF NOT EXISTS bans (
-            user_id INTEGER PRIMARY KEY
-        )
+            user_id BIGINT PRIMARY KEY
+        );
     """)
-    conn.commit()
-    conn.close()
+    await conn.close()
 
-def save_message(admin_msg_id: int, user_id: int):
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO messages (admin_msg_id, user_id) VALUES (?, ?)",
-        (admin_msg_id, user_id)
+async def save_message(admin_msg_id: int, user_id: int):
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    await conn.execute(
+        "INSERT INTO messages (admin_msg_id, user_id) VALUES ($1, $2)",
+        admin_msg_id, user_id
     )
-    conn.commit()
-    conn.close()
+    await conn.close()
 
-def get_user_by_admin_msg(admin_msg_id: int):
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_id FROM messages WHERE admin_msg_id = ?",
-        (admin_msg_id,)
+async def get_user_by_admin_msg(admin_msg_id: int):
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    row = await conn.fetchrow(
+        "SELECT user_id FROM messages WHERE admin_msg_id = $1",
+        admin_msg_id
     )
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else None
+    await conn.close()
+    return row["user_id"] if row else None
 
-def is_banned(user_id: int) -> bool:
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM bans WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
+async def is_banned(user_id: int) -> bool:
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    row = await conn.fetchrow("SELECT user_id FROM bans WHERE user_id = $1", user_id)
+    await conn.close()
     return row is not None
 
-def ban_user(user_id: int):
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO bans (user_id) VALUES (?)", (user_id,))
-    conn.commit()
-    conn.close()
+async def ban_user(user_id: int):
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    await conn.execute("INSERT INTO bans (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
+    await conn.close()
 
-def unban_user(user_id: int):
-    conn = sqlite3.connect("bridge_bot.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM bans WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+async def unban_user(user_id: int):
+    conn = await asyncpg.connect(dsn=DATABASE_URL)
+    await conn.execute("DELETE FROM bans WHERE user_id = $1", user_id)
+    await conn.close()
     
