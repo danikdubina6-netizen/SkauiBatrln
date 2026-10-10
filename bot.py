@@ -75,32 +75,31 @@ async def reveal_callback(callback: CallbackQuery):
 
     await callback.answer(info_text, show_alert=True)
 
-# Уведомление о реакциях
+# Когда ТЫ ставишь реакцию -> сообщение отправляется ПОЛЬЗОВАТЕЛЮ
 @dp.message_reaction()
 async def reaction_handler(reaction: MessageReactionUpdated):
+    # Проверяем, что реакцию поставил именно админ (ты)
     if reaction.chat.id == ADMIN_ID:
         user_id = await get_user_by_admin_msg(reaction.message_id)
         if user_id:
             try:
-                # Извлекаем эмодзи поставленной реакции (если они есть)
                 new_reacts = reaction.new_reaction
                 if new_reacts:
-                    # Берем первый попавшийся эмодзи из списка новых реакций
                     emoji = getattr(new_reacts[0], "emoji", "👍")
-                else:
-                    emoji = "👍"
-                
-                await bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=f"💬 Аноним оставил реакцию <b>{emoji}</b> на сообщение.",
-                    parse_mode="HTML"
-                )
+                    
+                    # Отправляем сообщение пользователю!
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=f"Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение.",
+                        parse_mode="HTML"
+                    )
             except Exception as e:
-                print(f"Ошибка отправки уведомления о реакции: {e}")
+                print(f"Ошибка отправки реакции пользователю: {e}")
 
 # Сообщения и пересылка
 @dp.message()
 async def main_message_handler(message: Message):
+    # Ответы от админа пользователю
     if message.from_user.id == ADMIN_ID:
         if not message.reply_to_message:
             await message.answer("Сделайте reply на сообщение анонима, чтобы ответить ему.")
@@ -117,6 +116,7 @@ async def main_message_handler(message: Message):
         await message.copy_to(chat_id=user_id)
         return
 
+    # Сообщение от анонима админу
     user_id = message.from_user.id
     if await is_banned(user_id):
         await message.answer("Вы заблокированы в этом боте.")
@@ -125,7 +125,7 @@ async def main_message_handler(message: Message):
     await bot.send_chat_action(chat_id=ADMIN_ID, action=ChatAction.TYPING)
     await asyncio.sleep(1)
 
-    # 1. Отправляем кнопку "Показать кто отправил" В НАЧАЛЕ (ПЕРЕД сообщением)
+    # 1. Кнопка "Показать кто отправил"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}")]
     ])
@@ -136,10 +136,10 @@ async def main_message_handler(message: Message):
         parse_mode="HTML"
     )
 
-    # 2. Копируем само сообщение анонима ниже
+    # 2. Пересылка самого сообщения
     forwarded = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем связку в базу
+    # Сохраняем привязку для ответов и реакций
     await save_message(admin_msg_id=forwarded.message_id, user_id=user_id)
     await save_message(admin_msg_id=control_msg.message_id, user_id=user_id)
 
