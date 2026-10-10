@@ -55,7 +55,7 @@ async def unban_handler(message: Message):
     except (IndexError, ValueError):
         await message.answer("Использование: /unban <USER_ID>")
 
-# Кнопка "Показать кто отправил" (теперь с динамической кнопкой бана/разбана в сообщении)
+# Кнопка "Показать кто отправил"
 @dp.callback_query(F.data.startswith("reveal_"))
 async def reveal_callback(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -73,7 +73,6 @@ async def reveal_callback(callback: CallbackQuery):
     except Exception:
         info_text = f"👤 <b>Информация об отправителе:</b>\nID: {user_id} (не удалось получить профиль)"
 
-    # Проверяем статус блокировки
     banned = await is_banned(user_id)
     btn_text = "🔓 Разблокировать контакт" if banned else "🚫 Заблокировать контакт"
     btn_action = f"toggleban_{user_id}"
@@ -82,11 +81,9 @@ async def reveal_callback(callback: CallbackQuery):
         [InlineKeyboardButton(text=btn_text, callback_data=btn_action)]
     ])
 
-    # Редактируем сообщение или шлем всплывающее окошко с клавиатурой под ним (отправим сообщением для удобства)
     await callback.message.answer(info_text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-# Обработка нажатия на кнопку блокировки/разблокировки прямо из меню
 @dp.callback_query(F.data.startswith("toggleban_"))
 async def toggle_ban_callback(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -99,13 +96,12 @@ async def toggle_ban_callback(callback: CallbackQuery):
     if banned:
         await unban_user(user_id)
         new_btn_text = "🚫 Заблокировать контакт"
-        alert_text = f" Пользователь {user_id} разблокирован."
+        alert_text = f"Пользователь {user_id} разблокирован."
     else:
         await ban_user(user_id)
         new_btn_text = "🔓 Разблокировать контакт"
         alert_text = f"🚷 Пользователь {user_id} заблокирован."
 
-    # Обновляем текст кнопки на ходу
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=new_btn_text, callback_data=f"toggleban_{user_id}")]
     ])
@@ -117,7 +113,7 @@ async def toggle_ban_callback(callback: CallbackQuery):
 
     await callback.answer(alert_text, show_alert=True)
 
-# Когда ТЫ ставишь реакцию -> отправляем пользователю уведомление с цитатой его сообщения
+# Реакции админа -> уведомление пользователю
 @dp.message_reaction()
 async def reaction_handler(reaction: MessageReactionUpdated):
     if reaction.chat.id == ADMIN_ID:
@@ -161,7 +157,6 @@ async def main_message_handler(message: Message):
 
         await message.copy_to(chat_id=user_id)
 
-        # Ставим реакцию ✍️ на твое сообщение, подтверждая успешную отправку
         try:
             await bot.set_message_reaction(
                 chat_id=ADMIN_ID,
@@ -182,7 +177,6 @@ async def main_message_handler(message: Message):
     await bot.send_chat_action(chat_id=ADMIN_ID, action=ChatAction.TYPING)
     await asyncio.sleep(1)
 
-    # 1. Кнопка "Показать кто отправил" В НАЧАЛЕ
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}")]
     ])
@@ -193,10 +187,8 @@ async def main_message_handler(message: Message):
         parse_mode="HTML"
     )
 
-    # 2. Пересылка самого сообщения
     forwarded = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем связки в базу
     await save_message(admin_msg_id=forwarded.message_id, user_id=user_id, user_msg_id=message.message_id)
     await save_message(admin_msg_id=control_msg.message_id, user_id=user_id, user_msg_id=message.message_id)
 
@@ -206,4 +198,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                       
+    
