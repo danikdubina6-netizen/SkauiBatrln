@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main", "master" ]
   schedule:
-    # Запуск каждые 5 часов (в 00:00, 05:00, 10:00, 15:00, 20:00 по UTC)
     - cron: '0 */5 * * *'
   workflow_dispatch:
 
@@ -28,5 +27,6 @@ jobs:
       - name: Run Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python bot.py
         
