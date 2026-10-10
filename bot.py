@@ -91,7 +91,6 @@ async def reaction_handler(reaction: MessageReactionUpdated):
                 else:
                     emoji = "👍"
 
-                # Отправляем пользователю уведомление с реплаем (цитатой) на его сообщение
                 await bot.send_message(
                     chat_id=user_id,
                     text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
@@ -119,6 +118,17 @@ async def main_message_handler(message: Message):
         await asyncio.sleep(1)
 
         await message.copy_to(chat_id=user_id)
+
+        # Ставим реакцию ✍️ на твое сообщение, подтверждая успешную отправку
+        try:
+            await bot.set_message_reaction(
+                chat_id=ADMIN_ID,
+                message_id=message.message_id,
+                reaction=[types.ReactionTypeEmoji(emoji="✍️")]
+            )
+        except Exception as e:
+            print(f"Не удалось поставить реакцию подтверждения: {e}")
+
         return
 
     # Сообщение от анонима админу
@@ -144,7 +154,7 @@ async def main_message_handler(message: Message):
     # 2. Пересылка самого сообщения
     forwarded = await message.copy_to(chat_id=ADMIN_ID)
     
-    # Сохраняем связки в базу (включая оригинальный ID сообщения пользователя message.message_id)
+    # Сохраняем связки в базу
     await save_message(admin_msg_id=forwarded.message_id, user_id=user_id, user_msg_id=message.message_id)
     await save_message(admin_msg_id=control_msg.message_id, user_id=user_id, user_msg_id=message.message_id)
 
