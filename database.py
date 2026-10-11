@@ -61,6 +61,15 @@ async def get_user_msg_id(admin_msg_id: int):
             row = await cursor.fetchone()
             return row[0] if row else None
 
+async def get_admin_msg_by_user_msg(user_msg_id: int):
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute(
+            "SELECT admin_msg_id FROM messages WHERE user_msg_id = ?",
+            (user_msg_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
 async def is_banned(user_id: int) -> bool:
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute(
