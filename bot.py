@@ -113,22 +113,23 @@ async def toggle_ban_callback(callback: CallbackQuery):
 
     await callback.answer(alert_text, show_alert=True)
 
-# Когда ТЫ ставишь реакцию на сообщение в админке -> уведомление летит ДРУГУ с цитатой его сообщения
+# Обработка реакций в обе стороны
 @dp.message_reaction()
 async def reaction_handler(reaction: MessageReactionUpdated):
+    msg_id = reaction.message_id
+    user_id = await get_user_by_admin_msg(msg_id)
+    user_msg_id = await get_user_msg_id(msg_id)
+
+    if not user_id:
+        return
+
+    new_reacts = reaction.new_reaction
+    emoji = getattr(new_reacts[0], "emoji", "👍") if new_reacts else "👍"
+
+    # Если реакцию поставил АДМИН в чате с ботом -> уведомление летит ДРУГУ
     if reaction.chat.id == ADMIN_ID:
-        admin_msg_id = reaction.message_id
-        user_id = await get_user_by_admin_msg(admin_msg_id)
-        user_msg_id = await get_user_msg_id(admin_msg_id)
-
-        if user_id and user_msg_id:
+        if user_msg_id:
             try:
-                new_reacts = reaction.new_reaction
-                if new_reacts:
-                    emoji = getattr(new_reacts[0], "emoji", "👍")
-                else:
-                    emoji = "👍"
-
                 await bot.send_message(
                     chat_id=user_id,
                     text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
@@ -136,7 +137,19 @@ async def reaction_handler(reaction: MessageReactionUpdated):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                print(f"Ошибка отправки реакции пользователю: {e}")
+                print(f"Ошибка отправки реакции другу: {e}")
+
+    # Если реакцию поставил ДРУГ в своем чате -> уведомление летит АДМИНУ (тебе)
+    elif reaction.chat.id == user_id:
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"💬 Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение:",
+                reply_to_message_id=msg_id,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"Ошибка уведомления админа о реакции: {e}")
 
 # Сообщения и пересылка
 @dp.message()
@@ -155,8 +168,13 @@ async def main_message_handler(message: Message):
         await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
         await asyncio.sleep(1)
 
-        await message.copy_to(chat_id=user_id)
+        # Отправляем ответ пользователю
+        sent_msg = await message.copy_to(chat_id=user_id)
 
+        # Сохраняем твое сообщение в базу, чтобы ловить реакции от друга на него
+        await save_message(admin_msg_id=message.message_id, user_id=user_id, user_msg_id=sent_msg.message_id)
+
+        # Ставим реакцию ✍️ на твое сообщение для подтверждения
         try:
             await bot.set_message_reaction(
                 chat_id=ADMIN_ID,
@@ -198,4 +216,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                    
+        
