@@ -113,73 +113,7 @@ async def toggle_ban_callback(callback: CallbackQuery):
 
     await callback.answer(alert_text, show_alert=True)
 
-# Меню выбора реакций для админа (кнопка под сообщением анонима)
-@dp.callback_query(F.data.startswith("reactmenu_"))
-async def react_menu_callback(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Только для администратора!", show_alert=True)
-        return
-
-    user_id = int(callback.data.split("_")[1])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍", callback_data=f"sendreact_{user_id}_👍"),
-            InlineKeyboardButton(text="🔥", callback_data=f"sendreact_{user_id}_🔥"),
-            InlineKeyboardButton(text="❤️", callback_data=f"sendreact_{user_id}_❤️"),
-            InlineKeyboardButton(text="💩", callback_data=f"sendreact_{user_id}_💩"),
-        ],
-        [
-            InlineKeyboardButton(text="🎉", callback_data=f"sendreact_{user_id}_🎉"),
-            InlineKeyboardButton(text="👎", callback_data=f"sendreact_{user_id}_👎"),
-            InlineKeyboardButton(text="⚡️", callback_data=f"sendreact_{user_id}_⚡️"),
-            InlineKeyboardButton(text="🗿", callback_data=f"sendreact_{user_id}_🗿"),
-        ],
-        [InlineKeyboardButton(text="« Назад", callback_data=f"reveal_{user_id}")]
-    ])
-    
-    await callback.message.edit_text("👇 <b>Выберите реакцию для отправки:</b>", reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-# Отправка выбранной реакции анониму с цитатой
-@dp.callback_query(F.data.startswith("sendreact_"))
-async def send_reaction_callback(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Только для администратора!", show_alert=True)
-        return
-
-    _, user_id_str, emoji = callback.data.split("_", 2)
-    user_id = int(user_id_str)
-    
-    user_msg_id = await get_user_msg_id(callback.message.message_id)
-
-    try:
-        if user_msg_id:
-            await bot.send_message(
-                chat_id=user_id,
-                text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
-                reply_to_message_id=user_msg_id,
-                parse_mode="HTML"
-            )
-        else:
-            await bot.send_message(
-                chat_id=user_id,
-                text=f"Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение.",
-                parse_mode="HTML"
-            )
-        await callback.answer(f"Реакция {emoji} отправлена!", show_alert=False)
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}"),
-                InlineKeyboardButton(text="⭐ Реакция", callback_data=f"reactmenu_{user_id}")
-            ]
-        ])
-        await callback.message.edit_text("👇 <b>Анонимное сообщение:</b>", reply_markup=keyboard, parse_mode="HTML")
-    except Exception as e:
-        await callback.answer(f"Ошибка отправки: {e}", show_alert=True)
-
-# Когда АНОНИМ ставит реакцию на ТВОЕ сообщение в чате с тобой -> тебе приходит уведомление
+# Когда ТЫ ставишь реакцию на сообщение в админке -> уведомление летит ДРУГУ с цитатой его сообщения
 @dp.message_reaction()
 async def reaction_handler(reaction: MessageReactionUpdated):
     if reaction.chat.id == ADMIN_ID:
@@ -196,13 +130,13 @@ async def reaction_handler(reaction: MessageReactionUpdated):
                     emoji = "👍"
 
                 await bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=f"💬 Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение.",
-                    reply_to_message_id=admin_msg_id,
+                    chat_id=user_id,
+                    text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
+                    reply_to_message_id=user_msg_id,
                     parse_mode="HTML"
                 )
             except Exception as e:
-                print(f"Ошибка уведомления о реакции: {e}")
+                print(f"Ошибка отправки реакции пользователю: {e}")
 
 # Сообщения и пересылка
 @dp.message()
@@ -244,10 +178,7 @@ async def main_message_handler(message: Message):
     await asyncio.sleep(1)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}"),
-            InlineKeyboardButton(text="⭐ Реакция", callback_data=f"reactmenu_{user_id}")
-        ]
+        [InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}")]
     ])
     control_msg = await bot.send_message(
         chat_id=ADMIN_ID,
@@ -267,4 +198,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+                    
