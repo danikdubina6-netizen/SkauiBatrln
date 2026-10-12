@@ -147,7 +147,7 @@ async def can_manage(message: types.Message) -> bool:
     return False
 
 
-# КОМАНДА И ТЕКСТОВЫЙ ТРИГГЕР ДЛЯ ОЧИСТКИ УДАЛЕННЫХ АККАУНТОВ
+# 1. КОМАНДА И ТЕКСТОВЫЙ ТРИГГЕР ДЛЯ ОЧИСТКИ УДАЛЕННЫХ АККАУНТОВ
 @dp.message(F.text.lower().regexp(r"^(/cleandeleted(@[a-zA-Z0-9_]+)?|очистить удаленных аккаунтов|очистить удаленных)"))
 async def clean_deleted_accounts(message: types.Message):
     if message.chat.type == "private":
@@ -158,7 +158,7 @@ async def clean_deleted_accounts(message: types.Message):
         await message.reply("⛔ Только владелец или модераторы могут запускать очистку чата!")
         return
 
-    status_msg = await message.answer("🧹 Сканирую администраторов и доступных участников на наличие удаленных аккаунтов...")
+    status_msg = await message.answer("🧹 Проверяю список администраторов и активных участников на «собачек»...")
     
     chat_id = message.chat.id
     removed_count = 0
@@ -178,25 +178,24 @@ async def clean_deleted_accounts(message: types.Message):
         if removed_count > 0:
             await status_msg.edit_text(f"✅ Очистка завершена! Удалено аккаунтов: **{removed_count}**", parse_mode="Markdown")
         else:
-            await status_msg.edit_text("✅ Очистка завершена! Среди администраторов удаленных аккаунтов не найдено.\n\n🛡 Авто-бан активен: если удаленный аккаунт напишет в чат, бот мгновенно удалит его сообщение и забанит!")
+            await status_msg.edit_text("✅ Очистка завершена! Удаленных аккаунтов среди видимых пользователей не найдено.\n\n🛡 Включен авто-бан: если удаленный аккаунт напишет сообщение, бот сразу забанит его!")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка при сканировании: {e}")
 
 
-# АВТО-БАН УДАЛЕННЫХ АККАУНТОВ ПРИ ЛЮБОЙ АКТИВНОСТИ В ЧАТЕ
-@dp.message()
+# 2. АВТО-БАН УДАЛЕННЫХ АККАУНТОВ ПРИ ЛЮБОЙ АКТИВНОСТИ В ЧАТЕ
+@dp.message(F.from_user.first_name == "Deleted Account")
 async def auto_ban_deleted_users(message: types.Message):
     user = message.from_user
     if not user or message.chat.type == "private":
         return
 
-    if user.first_name == "Deleted Account" or getattr(user, 'is_deleted', False):
-        try:
-            await message.delete()
-            await bot.ban_chat_member(message.chat.id, user.id)
-            await message.answer(f"🗑 Удаленный аккаунт (ID: `{user.id}`) автоматически забанен и очищен из чата.", parse_mode="Markdown")
-        except Exception:
-            pass
+    try:
+        await message.delete()
+        await bot.ban_chat_member(message.chat.id, user.id)
+        await message.answer(f"🗑 Удаленный аккаунт (ID: `{user.id}`) забанен и очищен из чата.", parse_mode="Markdown")
+    except Exception:
+        pass
 
 
 # ЛОВИМ РУЧНЫЕ УДАЛЕНИЯ И ВХОДЫ
