@@ -148,7 +148,7 @@ async def can_manage(message: types.Message) -> bool:
 
 
 # ==========================================
-# 1. САМЫЙ ПЕРВЫЙ ТРИГГЕР ОЧИСТКИ (Без перехвата другими)
+# 1. ИНТЕЛЛЕКТУАЛЬНАЯ ОЧИСТКА ПО ИСТОРИИ И АДМИНАМ
 # ==========================================
 @dp.message(Command("cleandeleted"))
 @dp.message(F.text.lower().in_({"очистить удаленных аккаунтов", "очистить удаленных"}))
@@ -161,29 +161,47 @@ async def clean_deleted_accounts(message: types.Message):
         await message.reply("⛔ Только владелец или модераторы могут запускать очистку чата!")
         return
 
-    status_msg = await message.answer("🧹 Проверяю список администраторов и участников...")
+    status_msg = await message.answer("🧹 Сканирую недавнюю активность и историю чата на наличие удаленных аккаунтов...")
     
     chat_id = message.chat.id
     removed_count = 0
+    checked_users = set()
 
     try:
+        # Проверяем администраторов чата
         admins = await bot.get_chat_administrators(chat_id)
         for admin in admins:
             user = admin.user
-            if user.first_name == "Deleted Account" or getattr(user, 'is_deleted', False):
-                try:
-                    await bot.ban_chat_member(chat_id, user.id)
-                    await bot.unban_chat_member(chat_id, user.id)
-                    removed_count += 1
-                except Exception:
-                    pass
+            if user.id not in checked_users:
+                checked_users.add(user.id)
+                if user.first_name == "Deleted Account" or getattr(user, 'is_deleted', False):
+                    try:
+                        await bot.ban_chat_member(chat_id, user.id)
+                        await bot.unban_chat_member(chat_id, user.id)
+                        removed_count += 1
+                    except Exception:
+                        pass
+
+        # Проверяем авторов последних сообщений в чате
+        async for msg in bot.get_chat_history(chat_id, limit=200):
+            if msg.from_user:
+                user = msg.from_user
+                if user.id not in checked_users:
+                    checked_users.add(user.id)
+                    if user.first_name == "Deleted Account" or getattr(user, 'is_deleted', False):
+                        try:
+                            await bot.ban_chat_member(chat_id, user.id)
+                            await bot.unban_chat_member(chat_id, user.id)
+                            removed_count += 1
+                        except Exception:
+                            pass
 
         if removed_count > 0:
-            await status_msg.edit_text(f"✅ Очистка завершена! Удалено аккаунтов: **{removed_count}**", parse_mode="Markdown")
+            await status_msg.edit_text(f"✅ Очистка завершена! Найдено и забанено удаленных аккаунтов: **{removed_count}**", parse_mode="Markdown")
         else:
-            await status_msg.edit_text("✅ Очистка завершена! Удаленных аккаунтов среди администраторов не найдено.\n\n🛡 Авто-бан активен: если удаленный аккаунт напишет сообщение, бот сразу забанит его!")
+            await status_msg.edit_text("✅ Очистка завершена! Среди проверенных участников удаленных аккаунтов не найдено.\n\n🛡 Авто-бан активен: при любой активности «собачки» бот мгновенно её забанит!")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        await status_msg.edit_text(f"❌ Ошибка при сканировании истории: {e}")
 
 
 # АВТО-БАН УДАЛЕННЫХ АККАУНТОВ ПРИ АКТИВНОСТИ
@@ -508,9 +526,7 @@ async def text_mute(message: types.Message):
     time_text = "навсегда"
 
     if len(args) >= 2:
-        try:
-            for i, arg in enumerate(args):
-                if arg.isdigit():
+        try:                 if arg.isdigit():
                     amount = int(arg)
                     unit = args[i+1].lower() if i+1 < len(args) else "мин"
                     
@@ -531,7 +547,7 @@ async def text_mute(message: types.Message):
 
     try:
         await message.chat.restrict(
-             user_id=target_user.id,
+            user_id=target_user.id,
             permissions=ChatPermissions(can_send_messages=False),
             until_date=until_date
         )
@@ -579,4 +595,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                        
+    
+       
