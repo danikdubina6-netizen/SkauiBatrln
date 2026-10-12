@@ -118,6 +118,7 @@ async def set_main_menu(bot: Bot):
         BotCommand(command="unban", description="Разбанить пользователя (в ответ)"),
         BotCommand(command="mute", description="Замутить пользователя (в ответ)"),
         BotCommand(command="unmute", description="Размутить пользователя (в ответ)"),
+        BotCommand(command="cleandeleted", description="Очистить удаленные аккаунты"),
         BotCommand(command="rules", description="Показать правила из описания"),
         BotCommand(command="addmod", description="Добавить модератора (в ответ)"),
         BotCommand(command="delmod", description="Убрать модератора (в ответ)"),
@@ -146,41 +147,55 @@ async def can_manage(message: types.Message) -> bool:
     return False
 
 
-# ЛОВИМ РУЧНЫЕ УДАЛЕНИЯ И ВХОДЫ (Служебные события)
+# КОМАНДА И ТЕКСТОВЫЙ ТРИГГЕР ДЛЯ ОЧИСТКИ УДАЛЕННЫХ АККАУНТОВ
+@dp.message(F.text.lower().regexp(r"^(/cleandeleted(@\w+)?|очистить удаленных аккаунтов|очистить удаленных)"))
+async def clean_deleted_accounts(message: types.Message):
+    if message.chat.type == "private":
+        await message.answer("ℹ️ Эту команду или фразу нужно использовать в группе!")
+        return
+
+    if not await can_manage(message):
+        await message.reply("⛔ Только владелец или модераторы могут запускать очистку чата!")
+        return
+
+    status_msg = await message.answer("🧹 Сканирую чат на наличие удаленных аккаунтов («собачек»)... Пожалуйста, подождите.")
+    
+    try:
+        await status_msg.edit_text(
+            "⚠️ **Внимание:** Из-за ограничений безопасности Telegram Bot API, боты не могут сканировать скрытые списки всех участников чата.\n\n"
+            "Однако бот **автоматически банит и удаляет** любые удаленные аккаунты и спамеров, как только они пытаются подать голос или зайти в чат!"
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка при сканировании: {e}")
+
+
+# ЛОВИМ РУЧНЫЕ УДАЛЕНИЯ И ВХОДЫ
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=KICKED | LEFT | MEMBER))
 async def track_chat_member_updates(event: types.ChatMemberUpdated):
     chat_id = event.chat.id
     user = event.new_chat_member.user
     new_status = event.new_chat_member.status
     old_status = event.old_chat_member.status
-    actor = event.from_user  # Кто совершил действие (если доступно)
+    actor = event.from_user
 
-    # 1. Если пользователь вышел сам или был кикнут/забанен
     if new_status in ("kicked", "left") and old_status not in ("kicked", "left"):
-        # Если это сделал сам бот в рамках верификации, пропускаем лишний лог
         if actor and actor.id == (await bot.get_me()).id:
             return
 
-        # Форматируем имя и юзернейм удаленного
         target_name = user.full_name
         target_mention = f"@{user.username}" if user.username else f"ID: `{user.id}`"
         target_str = f"{target_name} ({target_mention})"
 
-        # Кто удалил (если Telegram передал информацию об админе)
         if actor and actor.id != user.id:
             actor_name = actor.full_name
             actor_mention = f"@{actor.username}" if actor.username else f"ID: `{actor.id}`"
             actor_str = f"{actor_name} ({actor_mention})"
             await bot.send_message(chat_id, f"🗑 Админ {actor_str} удалил {target_str}.", parse_mode="Markdown")
         else:
-            # Если удалили вручную, но админ не отследился или человек вышел сам
-            if new_status == "left":
-                pass # Выход по собственному желанию можно не спамить или оставить по желанию
-            else:
+            if new_status == "kicked":
                 await bot.send_message(chat_id, f"🗑 Пользователь {target_str} был удален из чата.", parse_mode="Markdown")
         return
 
-    # 2. Логика верификации новых участников (когда статус MEMBER)
     if new_status == "member" and old_status in ("left", "kicked", "restricted"):
         if user.is_bot or not antispam_settings.get(chat_id, True):
             return
@@ -518,7 +533,7 @@ async def text_unmute(message: types.Message):
                 can_send_voice_notes=True,
                 can_send_polls=True,
                 can_add_web_page_previews=True
-            )
+                )
         )
         await message.answer(f"Пользователь {target_user.full_name} размучен.")
     except Exception as e:
@@ -532,4 +547,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
