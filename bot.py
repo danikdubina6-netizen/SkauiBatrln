@@ -1,276 +1,535 @@
-import os
 import asyncio
+import json
+import os
+import logging
+import base64
+import aiohttp
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.enums import ChatAction
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, MessageReactionUpdated, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from database import (
-    init_db, save_message, get_user_by_admin_msg, get_user_msg_id,
-    get_admin_msg_by_user_msg, is_banned, ban_user, unban_user
-)
+from aiogram.filters import ChatMemberUpdatedFilter, MEMBER, KICKED, LEFT
+from aiogram.types import BotCommand, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 7725909693
+logging.basicConfig(level=logging.INFO)
+
+TOKEN = "8850468671:AAEJ31dG-_4JOmg3IOC9e_T3IdtVarLftnY"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("Бот запущен и работает! Ждем анонимные сообщения.")
+MODS_FILE = "mods.json"
+SETTINGS_FILE = "settings.json"
+
+REPO_OWNER = "danikdubina6-netizen"
+REPO_NAME = "Topyak_bot2026"
+GITHUB_TOKEN = os.getenv("GH_TOKEN")
+
+# Словарь для отслеживания прошедших верификацию: {chat_id: {user_id: True}}
+verified_users = {}
+
+
+def load_data(filename):
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {int(chat_id): {int(uid) if str(uid).isdigit() else uid: val for uid, val in items.items()} for chat_id, items in data.items()}
+        except Exception:
+            return {}
+    return {}
+
+
+group_moderators = load_data(MODS_FILE)
+
+
+def load_antispam_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {int(chat_id): val for chat_id, val in data.items()}
+        except Exception:
+            return {}
+    return {}
+
+
+antispam_settings = load_antispam_settings()
+
+
+async def push_file_to_github(filename):
+    if not GITHUB_TOKEN:
+        logging.warning("GitHub токен не найден, авто-коммит пропущен.")
         return
 
-    if await is_banned(message.from_user.id):
-        return
-    
-    welcome_text = (
-        "<b>👋 Добро пожаловать в анонимный чат!</b>\n\n"
-        "💬 <i>Здесь вы можете отправить любое сообщение, фото, видео или аудио, и получатель получит его полностью анонимно.</i>\n\n"
-        "✨ Просто напишите ваш текст или отправьте файл следующим сообщением!"
-    )
-    await message.answer(welcome_text, parse_mode="HTML")
+    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{filename}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
 
-@dp.message(Command("ban"), F.from_user.id == ADMIN_ID)
-async def ban_handler(message: Message):
-    if not message.reply_to_message:
-        await message.answer("Сделайте reply (ответ) на сообщение, чтобы заблокировать этого анонима.")
-        return
-    
-    target_msg_id = message.reply_to_message.message_id
-    user_id = await get_user_by_admin_msg(target_msg_id)
-    
-    if user_id:
-        await ban_user(user_id)
-        await message.answer(f"🚷 Аноним (ID: {user_id}) успешно заблокирован.")
-    else:
-        await message.answer("Не удалось найти пользователя.")
+    async with aiohttp.ClientSession() as session:
+        sha = None
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 200:
+                file_info = await resp.json()
+                sha = file_info.get("sha")
 
-@dp.message(Command("unban"), F.from_user.id == ADMIN_ID)
-async def unban_handler(message: Message):
-    try:
-        user_id = int(message.text.split()[1])
-        await unban_user(user_id)
-        await message.answer(f"Пользователь {user_id} разблокирован.")
-    except (IndexError, ValueError):
-        await message.answer("Использование: /unban <USER_ID>")
-
-# Кнопка "Показать кто отправил" у админа
-@dp.callback_query(F.data.startswith("reveal_"))
-async def reveal_callback(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Эта кнопка только для администратора!", show_alert=True)
-        return
-
-    user_id = int(callback.data.split("_")[1])
-    
-    try:
-        chat = await bot.get_chat(user_id)
-        username_str = f"@{chat.username}" if chat.username else "нет юзернейма"
-        name_str = chat.first_name or "Без имени"
+        with open(filename, "r", encoding="utf-8") as f:
+            content_str = f.read()
         
-        info_text = f"👤 <b>Информация об отправителе:</b>\nИмя: {name_str}\nЮзернейм: {username_str}\nID: {user_id}"
-    except Exception:
-        info_text = f"👤 <b>Информация об отправителе:</b>\nID: {user_id} (не удалось получить профиль)"
+        content_encoded = base64.b64encode(content_str.encode("utf-8")).decode("utf-8")
 
-    banned = await is_banned(user_id)
-    btn_text = "🔓 Разблокировать контакт" if banned else "🚫 Заблокировать контакт"
-    btn_action = f"toggleban_{user_id}"
+        payload = {
+            "message": f"Auto-update {filename} via bot command",
+            "content": content_encoded,
+            "branch": "main"
+        }
+        if sha:
+            payload["sha"] = sha
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=btn_text, callback_data=btn_action)]
-    ])
+        async with session.put(url, headers=headers, json=payload) as resp:
+            if resp.status in (200, 201):
+                logging.info(f"Файл {filename} успешно закоммичен на GitHub!")
+            else:
+                text = await resp.text()
+                logging.error(f"Не удалось запушить {filename} в GitHub: {text}")
 
-    await callback.message.answer(info_text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
 
-@dp.callback_query(F.data.startswith("toggleban_"))
-async def toggle_ban_callback(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Эта кнопка только для администратора!", show_alert=True)
-        return
-
-    user_id = int(callback.data.split("_")[1])
-    banned = await is_banned(user_id)
-
-    if banned:
-        await unban_user(user_id)
-        new_btn_text = "🚫 Заблокировать контакт"
-        alert_text = f"Пользователь {user_id} разблокирован."
-    else:
-        await ban_user(user_id)
-        new_btn_text = "🔓 Разблокировать контакт"
-        alert_text = f"🚷 Пользователь {user_id} заблокирован."
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=new_btn_text, callback_data=f"toggleban_{user_id}")]
-    ])
-    
+async def save_and_sync_moderators():
     try:
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
-    except Exception:
-        pass
+        with open(MODS_FILE, "w", encoding="utf-8") as f:
+            json.dump(group_moderators, f, ensure_ascii=False, indent=4)
+        await push_file_to_github(MODS_FILE)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения модераторов: {e}")
 
-    await callback.answer(alert_text, show_alert=True)
 
-# Меню выбора реакций для СОБЕСЕДНИКА (друга) под твоим сообщением
-@dp.callback_query(F.data.startswith("user_reactmenu_"))
-async def user_react_menu_callback(callback: CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍", callback_data="user_sendreact_👍"),
-            InlineKeyboardButton(text="🔥", callback_data="user_sendreact_🔥"),
-            InlineKeyboardButton(text="❤️", callback_data="user_sendreact_❤️"),
-            InlineKeyboardButton(text="💩", callback_data="user_sendreact_💩"),
-        ],
-        [
-            InlineKeyboardButton(text="🎉", callback_data="user_sendreact_🎉"),
-            InlineKeyboardButton(text="👎", callback_data="user_sendreact_👎"),
-            InlineKeyboardButton(text="⚡️", callback_data="user_sendreact_⚡️"),
-            InlineKeyboardButton(text="🗿", callback_data="user_sendreact_🗿"),
-        ],
-        [InlineKeyboardButton(text="« Назад", callback_data="user_reactback")]
-    ])
-    
+async def save_and_sync_settings():
     try:
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
-    except Exception:
-        pass
-    await callback.answer()
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(antispam_settings, f, ensure_ascii=False, indent=4)
+        await push_file_to_github(SETTINGS_FILE)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения настроек: {e}")
 
-# Кнопка "Назад" для возврата исходной кнопки реакции у собеседника
-@dp.callback_query(F.data == "user_reactback")
-async def user_react_back_callback(callback: CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Реакция", callback_data="user_reactmenu_")]
-    ])
+
+async def set_main_menu(bot: Bot):
+    main_menu_commands = [
+        BotCommand(command="ban", description="Забанить пользователя (в ответ)"),
+        BotCommand(command="unban", description="Разбанить пользователя (в ответ)"),
+        BotCommand(command="mute", description="Замутить пользователя (в ответ)"),
+        BotCommand(command="unmute", description="Размутить пользователя (в ответ)"),
+        BotCommand(command="rules", description="Показать правила из описания"),
+        BotCommand(command="addmod", description="Добавить модератора (в ответ)"),
+        BotCommand(command="delmod", description="Убрать модератора (в ответ)"),
+        BotCommand(command="mods", description="Список модераторов бота"),
+        BotCommand(command="antispam", description="Управление защитой от накрутки"),
+    ]
+    await bot.set_my_commands(main_menu_commands)
+
+
+async def is_owner(message: types.Message) -> bool:
+    if message.chat.type == "private":
+        return True
     try:
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        return member.status == "creator"
     except Exception:
-        pass
-    await callback.answer()
+        return False
 
-# Когда собеседник выбирает эмодзи в меню -> уведомление летит АДМИНУ (тебе)
-@dp.callback_query(F.data.startswith("user_sendreact_"))
-async def user_send_reaction_callback(callback: CallbackQuery):
-    emoji = callback.data.split("_", 2)[2]
-    user_msg_id = callback.message.message_id
-    
-    # Находим какое админское сообщение соответствует этому сообщению пользователя
-    admin_msg_id = await get_admin_msg_by_user_msg(user_msg_id)
 
-    try:
-        if admin_msg_id:
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"💬 Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение:",
-                reply_to_message_id=admin_msg_id,
-                parse_mode="HTML"
-            )
+async def can_manage(message: types.Message) -> bool:
+    if await is_owner(message):
+        return True
+    chat_mods = group_moderators.get(message.chat.id, {})
+    if message.from_user.id in chat_mods:
+        return True
+    return False
+
+
+# ЛОВИМ РУЧНЫЕ УДАЛЕНИЯ И ВХОДЫ (Служебные события)
+@dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=KICKED | LEFT | MEMBER))
+async def track_chat_member_updates(event: types.ChatMemberUpdated):
+    chat_id = event.chat.id
+    user = event.new_chat_member.user
+    new_status = event.new_chat_member.status
+    old_status = event.old_chat_member.status
+    actor = event.from_user  # Кто совершил действие (если доступно)
+
+    # 1. Если пользователь вышел сам или был кикнут/забанен
+    if new_status in ("kicked", "left") and old_status not in ("kicked", "left"):
+        # Если это сделал сам бот в рамках верификации, пропускаем лишний лог
+        if actor and actor.id == (await bot.get_me()).id:
+            return
+
+        # Форматируем имя и юзернейм удаленного
+        target_name = user.full_name
+        target_mention = f"@{user.username}" if user.username else f"ID: `{user.id}`"
+        target_str = f"{target_name} ({target_mention})"
+
+        # Кто удалил (если Telegram передал информацию об админе)
+        if actor and actor.id != user.id:
+            actor_name = actor.full_name
+            actor_mention = f"@{actor.username}" if actor.username else f"ID: `{actor.id}`"
+            actor_str = f"{actor_name} ({actor_mention})"
+            await bot.send_message(chat_id, f"🗑 Админ {actor_str} удалил {target_str}.", parse_mode="Markdown")
         else:
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"💬 Собеседник поставил реакцию <b>{emoji}</b> на ваше сообщение.",
-                parse_mode="HTML"
+            # Если удалили вручную, но админ не отследился или человек вышел сам
+            if new_status == "left":
+                pass # Выход по собственному желанию можно не спамить или оставить по желанию
+            else:
+                await bot.send_message(chat_id, f"🗑 Пользователь {target_str} был удален из чата.", parse_mode="Markdown")
+        return
+
+    # 2. Логика верификации новых участников (когда статус MEMBER)
+    if new_status == "member" and old_status in ("left", "kicked", "restricted"):
+        if user.is_bot or not antispam_settings.get(chat_id, True):
+            return
+
+        try:
+            await bot.restrict_chat_member(
+                chat_id=chat_id,
+                user_id=user.id,
+                permissions=ChatPermissions(can_send_messages=False)
             )
-        
-        # Возвращаем исходную кнопку "⭐ Реакция" собеседнику
+        except Exception:
+            pass
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ Реакция", callback_data="user_reactmenu_")]
+            [InlineKeyboardButton(text="✅ Я не бот (Нажми меня)", callback_data=f"verify_{user.id}")]
         ])
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
-        await callback.answer(f"Реакция {emoji} отправлена!", show_alert=False)
+
+        msg = await bot.send_message(
+            chat_id,
+            f"Привет, {user.full_name}!\n\n🤖 В этом чате работает защита от накрутки. Подтверди, что ты человек, нажав кнопку ниже в течение **3 минут**, иначе система тебя исключит.",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+
+        async def check_verification():
+            await asyncio.sleep(180)
+            try:
+                if chat_id in verified_users and user.id in verified_users[chat_id]:
+                    return  
+                
+                member = await bot.get_chat_member(chat_id, user.id)
+                if member.status in ("restricted", "member"):
+                    await bot.ban_chat_member(chat_id, user.id)
+                    await bot.unban_chat_member(chat_id, user.id)
+                    await msg.edit_text(f"❌ Пользователь {user.full_name} не прошел верификацию и был исключен.")
+            except Exception:
+                pass
+
+        asyncio.create_task(check_verification())
+
+
+# Команда /antispam
+@dp.message(F.text.lower().regexp(r"^(/antispam(@\w+)?|антиспам)"))
+async def toggle_antispam(message: types.Message):
+    chat_id = message.chat.id
+    args = message.text.split()
+
+    if len(args) < 2:
+        current_status = antispam_settings.get(chat_id, True)
+        status_text = "🟢 Включена" if current_status else "🔴 Выключена"
+        
+        help_text = (
+            f"🛡 **Управление защитой от накрутки (антиспам)**\n\n"
+            f"Текущий статус в этом чате: {status_text}\n\n"
+            f"📋 **Инструкция по настройке:**\n"
+            f"• Защита проверяет новых участников с помощью кнопки и таймера на 3 минуты, защищая чат от ботов.\n"
+            f"• Чтобы **включить** защиту, отправьте:\n`/antispam on`\n"
+            f"• Чтобы **выключить** защиту (убрать проверки), отправьте:\n`/antispam off`"
+        )
+        await message.answer(help_text, parse_mode="Markdown")
+        return
+
+    if not await can_manage(message):
+        await message.reply("⛔ Только владелец или модераторы могут менять настройки защиты!")
+        return
+
+    mode = args[1].lower()
+    if mode in ("on", "вкл", "1", "true"):
+        antispam_settings[chat_id] = True
+        await save_and_sync_settings()
+        await message.answer("✅ Защита от накрутки успешно **включена** для этого чата!", parse_mode="Markdown")
+    elif mode in ("off", "выкл", "0", "false"):
+        antispam_settings[chat_id] = False
+        await save_and_sync_settings()
+        await message.answer("⚠️ Защита от накрутки **выключена**. Жесткие проверки больше не действуют.", parse_mode="Markdown")
+    else:
+        await message.answer("❌ Неверный параметр! Используйте:\n`/antispam on` — включить\n`/antispam off` — выключить", parse_mode="Markdown")
+
+
+@dp.callback_query(F.data.startswith("verify_"))
+async def verify_callback(callback: types.CallbackQuery):
+    target_user_id = int(callback.data.split("_")[1])
+    
+    if callback.from_user.id != target_user_id:
+        await callback.answer("⛔ Эта кнопка не для тебя!", show_alert=True)
+        return
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+
+    if chat_id not in verified_users:
+        verified_users[chat_id] = {}
+    verified_users[chat_id][user_id] = True
+
+    try:
+        await bot.restrict_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            permissions=ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_add_web_page_previews=True
+            )
+        )
+        await callback.message.delete()
+        await callback.answer("✅ Верификация пройдена! Добро пожаловать.", show_alert=True)
     except Exception as e:
         await callback.answer(f"Ошибка: {e}", show_alert=True)
 
-# Когда ТЫ (админ) ставишь нативную реакцию на сообщение анонима в админке -> уведомление летит анониму
-@dp.message_reaction()
-async def admin_reaction_handler(reaction: MessageReactionUpdated):
-    if reaction.chat.id == ADMIN_ID:
-        admin_msg_id = reaction.message_id
-        user_id = await get_user_by_admin_msg(admin_msg_id)
-        user_msg_id = await get_user_msg_id(admin_msg_id)
 
-        if user_id and user_msg_id:
-            try:
-                new_reacts = reaction.new_reaction
-                emoji = getattr(new_reacts[0], "emoji", "👍") if new_reacts else "👍"
-
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=f"Собеседник поставил реакцию <b>{emoji}</b> на это сообщение:",
-                    reply_to_message_id=user_msg_id,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                print(f"Ошибка отправки реакции пользователю: {e}")
-
-# Сообщения и пересылка
-@dp.message()
-async def main_message_handler(message: Message):
-    # Ответы от админа пользователю
-    if message.from_user.id == ADMIN_ID:
-        if not message.reply_to_message:
-            await message.answer("Сделайте reply на сообщение анонима, чтобы ответить ему.")
-            return
-
-        user_id = await get_user_by_admin_msg(message.reply_to_message.message_id)
-        if not user_id:
-            await message.answer("Не удалось найти адресата.")
-            return
-
-        await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1)
-
-        # Отправляем сообщение другу С кнопкой «⭐ Реакция» под ним
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ Реакция", callback_data="user_reactmenu_")]
-        ])
-        sent_msg = await message.copy_to(chat_id=user_id, reply_markup=keyboard)
-
-        # Сохраняем связку для уведомлений
-        await save_message(admin_msg_id=message.message_id, user_id=user_id, user_msg_id=sent_msg.message_id)
-
-        # Ставим реакцию ✍️ на твое сообщение для подтверждения
-        try:
-            await bot.set_message_reaction(
-                chat_id=ADMIN_ID,
-                message_id=message.message_id,
-                reaction=[types.ReactionTypeEmoji(emoji="✍️")]
-            )
-        except Exception as e:
-            print(f"Не удалось поставить реакцию подтверждения: {e}")
-
+# ДОБАВИТЬ МОДЕРАТОРА
+@dp.message(F.text.lower().regexp(r"^(/addmod(@\w+)?|добавить модератора)"))
+async def add_moderator(message: types.Message):
+    if not await is_owner(message):
+        await message.reply("⛔ Только владелец группы может назначать модераторов!")
         return
 
-    # Сообщение от анонима админу
-    user_id = message.from_user.id
-    if await is_banned(user_id):
-        await message.answer("Вы заблокированы в этом боте.")
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай на сообщение пользователя!", parse_mode="Markdown")
         return
 
-    await bot.send_chat_action(chat_id=ADMIN_ID, action=ChatAction.TYPING)
-    await asyncio.sleep(1)
+    target_user = message.reply_to_message.from_user
+    chat_id = message.chat.id
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👀 Показать кто отправил", callback_data=f"reveal_{user_id}")]
-    ])
-    control_msg = await bot.send_message(
-        chat_id=ADMIN_ID,
-        text="👇 <b>Анонимное сообщение:</b>",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+    if chat_id not in group_moderators:
+        group_moderators[chat_id] = {}
 
-    forwarded = await message.copy_to(chat_id=ADMIN_ID)
+    group_moderators[chat_id][target_user.id] = target_user.full_name
+    await save_and_sync_moderators()
+    await message.answer(f"✅ Пользователь {target_user.full_name} назначен модератором и сохранен!")
+
+
+# УБРАТЬ МОДЕРАТОРА
+@dp.message(F.text.lower().regexp(r"^(/delmod(@\w+)?|убрать модератора)"))
+async def remove_moderator(message: types.Message):
+    if not await is_owner(message):
+        await message.reply("⛔ Только владелец группы может снимать модераторов!")
+        return
+
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай на сообщение модератора!", parse_mode="Markdown")
+        return
+
+    target_user = message.reply_to_message.from_user
+    chat_id = message.chat.id
+
+    chat_mods = group_moderators.get(chat_id, {})
+    if target_user.id in chat_mods:
+        del chat_mods[target_user.id]
+        await save_and_sync_moderators()
+        await message.answer(f"🗑 Пользователь {target_user.full_name} снят с поста модератора.")
+    else:
+        await message.answer(f"⚠️ Пользователь не найден в модераторах этого чата.")
+
+
+# СПИСОК МОДЕРАТОРОВ
+@dp.message(F.text.lower().regexp(r"^(/mods(@\w+)?|список администраторов|модераторы|админы)"))
+async def list_moderators(message: types.Message):
+    chat_id = message.chat.id
+    chat_mods = group_moderators.get(chat_id, {})
+
+    if not chat_mods:
+        await message.answer("ℹ️ У этого бота пока нет модераторов в данном чате.")
+        return
     
-    await save_message(admin_msg_id=forwarded.message_id, user_id=user_id, user_msg_id=message.message_id)
-    await save_message(admin_msg_id=control_msg.message_id, user_id=user_id, user_msg_id=message.message_id)
+    text = "🛡 **Список модераторов этого чата:**\n\n"
+    for idx, (uid, name) in enumerate(chat_mods.items(), 1):
+        text += f"{idx}. {name} (ID: `{uid}`)\n"
+        
+    await message.answer(text, parse_mode="Markdown")
+
+
+# ПРАВИЛА
+@dp.message(F.text.lower().regexp(r"^(/rules(@\w+)?|правила|каталог правил)"))
+async def text_rules(message: types.Message):
+    if message.chat.type == "private":
+        await message.answer("ℹ️ Используй эту команду в группе!")
+        return
+        
+    try:
+        chat_info = await bot.get_chat(message.chat.id)
+        if chat_info.description:
+            await message.answer(f"📋 **Правила группы:**\n\n{chat_info.description}", parse_mode="Markdown")
+        else:
+            await message.answer("⚠️ У группы нет описания с правилами!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+# БАН
+@dp.message(F.text.lower().regexp(r"^(/ban(@\w+)?|бан)"))
+async def text_ban(message: types.Message):
+    if not await can_manage(message):
+        await message.reply("⛔ Нет прав!")
+        return
+
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай на сообщение нарушителя!")
+        return
+
+    target_user = message.reply_to_message.from_user
+    args = message.text.split()
+    until_date = None
+    time_text = "навсегда"
+
+    if len(args) >= 2:
+        try:
+            for i, arg in enumerate(args):
+                if arg.isdigit():
+                    amount = int(arg)
+                    unit = args[i+1].lower() if i+1 < len(args) else "мин"
+                    
+                    if "час" in unit or "ч" in unit:
+                        duration_minutes = amount * 60
+                        time_text = f"на {amount} час(а)" if amount < 5 else f"на {amount} часов"
+                    elif "д" in unit:
+                        duration_minutes = amount * 24 * 60
+                        time_text = f"на {amount} день/дней"
+                    else:
+                        duration_minutes = amount
+                        time_text = f"на {amount} минут(ы)"
+                    
+                    until_date = datetime.now() + timedelta(minutes=duration_minutes)
+                    break
+        except Exception:
+            pass
+
+    try:
+        if until_date:
+            await bot.ban_chat_member(chat_id=message.chat.id, user_id=target_user.id, until_date=until_date)
+        else:
+            await bot.ban_chat_member(chat_id=message.chat.id, user_id=target_user.id)
+            
+        await message.answer(f"Пользователь {target_user.full_name} забанен {time_text}.")
+    except Exception as e:
+        await message.answer(f"Ошибка бана: {e}")
+
+
+# РАЗБАН
+@dp.message(F.text.lower().regexp(r"^(/unban(@\w+)?|разбан)"))
+async def text_unban(message: types.Message):
+    if not await can_manage(message):
+        await message.reply("⛔ Нет прав!")
+        return
+    
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай!")
+        return
+    
+    target_user = message.reply_to_message.from_user
+    try:
+        await bot.unban_chat_member(chat_id=message.chat.id, user_id=target_user.id)
+        await message.answer(f"Пользователь {target_user.full_name} разбанен.")
+    except Exception as e:
+        await message.answer(f"Ошибка разбана: {e}")
+
+
+# МУТ
+@dp.message(F.text.lower().regexp(r"^(/mute(@\w+)?|мут)"))
+async def text_mute(message: types.Message):
+    if not await can_manage(message):
+        await message.reply("⛔ Нет прав!")
+        return
+
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай!")
+        return
+    
+    target_user = message.reply_to_message.from_user
+    args = message.text.split()
+    until_date = None
+    time_text = "навсегда"
+
+    if len(args) >= 2:
+        try:
+            for i, arg in enumerate(args):
+                if arg.isdigit():
+                    amount = int(arg)
+                    unit = args[i+1].lower() if i+1 < len(args) else "мин"
+                    
+                    if "час" in unit or "ч" in unit:
+                        duration_minutes = amount * 60
+                        time_text = f"на {amount} час(а)" if amount < 5 else f"на {amount} часов"
+                    elif "д" in unit:
+                        duration_minutes = amount * 24 * 60
+                        time_text = f"на {amount} день/дней"
+                    else:
+                        duration_minutes = amount
+                        time_text = f"на {amount} минут(ы)"
+                        
+                    until_date = datetime.now() + timedelta(minutes=duration_minutes)
+                    break
+        except Exception:
+            pass
+
+    try:
+        await message.chat.restrict(
+            user_id=target_user.id,
+            permissions=ChatPermissions(can_send_messages=False),
+            until_date=until_date
+        )
+        await message.answer(f"Пользователь {target_user.full_name} замучен {time_text}.")
+    except Exception as e:
+        await message.answer(f"Ошибка мута: {e}")
+
+
+# РАЗМУТ
+@dp.message(F.text.lower().regexp(r"^(/unmute(@\w+)?|размут)"))
+async def text_unmute(message: types.Message):
+    if not await can_manage(message):
+        await message.reply("⛔ Нет прав!")
+        return
+
+    if not message.reply_to_message:
+        await message.reply("❌ Сделай реплай!")
+        return
+
+    target_user = message.reply_to_message.from_user
+    try:
+        await message.chat.restrict(
+            user_id=target_user.id,
+            permissions=ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_add_web_page_previews=True
+            )
+        )
+        await message.answer(f"Пользователь {target_user.full_name} размучен.")
+    except Exception as e:
+        await message.answer(f"Ошибка размута: {e}")
+
 
 async def main():
-    await init_db()
-    await dp.start_polling(bot, allowed_updates=["message", "message_reaction", "callback_query"])
+    await set_main_menu(bot)
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+        
