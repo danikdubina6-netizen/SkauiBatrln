@@ -6,7 +6,7 @@ import base64
 import aiohttp
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import ChatMemberUpdatedFilter, MEMBER, KICKED, LEFT
+from aiogram.filters import ChatMemberUpdatedFilter, MEMBER, KICKED, LEFT, Command
 from aiogram.types import BotCommand, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +23,7 @@ REPO_OWNER = "danikdubina6-netizen"
 REPO_NAME = "Topyak_bot2026"
 GITHUB_TOKEN = os.getenv("GH_TOKEN")
 
-# Словарь для отслеживания прошедших верификацию: {chat_id: {user_id: True}}
+# Словарь для отслеживания верификации: {chat_id: {user_id: True}}
 verified_users = {}
 
 
@@ -147,18 +147,21 @@ async def can_manage(message: types.Message) -> bool:
     return False
 
 
-# 1. КОМАНДА И ТЕКСТОВЫЙ ТРИГГЕР ДЛЯ ОЧИСТКИ УДАЛЕННЫХ АККАУНТОВ
-@dp.message(F.text.lower().regexp(r"^(/cleandeleted(@[a-zA-Z0-9_]+)?|очистить удаленных аккаунтов|очистить удаленных)"))
+# ==========================================
+# 1. САМЫЙ ПЕРВЫЙ ТРИГГЕР ОЧИСТКИ (Без перехвата другими)
+# ==========================================
+@dp.message(Command("cleandeleted"))
+@dp.message(F.text.lower().in_({"очистить удаленных аккаунтов", "очистить удаленных"}))
 async def clean_deleted_accounts(message: types.Message):
     if message.chat.type == "private":
-        await message.answer("ℹ️ Эту команду или фразу нужно использовать в группе!")
+        await message.answer("ℹ️ Эту команду нужно использовать в группе!")
         return
 
     if not await can_manage(message):
         await message.reply("⛔ Только владелец или модераторы могут запускать очистку чата!")
         return
 
-    status_msg = await message.answer("🧹 Проверяю список администраторов и активных участников на «собачек»...")
+    status_msg = await message.answer("🧹 Проверяю список администраторов и участников...")
     
     chat_id = message.chat.id
     removed_count = 0
@@ -178,12 +181,12 @@ async def clean_deleted_accounts(message: types.Message):
         if removed_count > 0:
             await status_msg.edit_text(f"✅ Очистка завершена! Удалено аккаунтов: **{removed_count}**", parse_mode="Markdown")
         else:
-            await status_msg.edit_text("✅ Очистка завершена! Удаленных аккаунтов среди видимых пользователей не найдено.\n\n🛡 Включен авто-бан: если удаленный аккаунт напишет сообщение, бот сразу забанит его!")
+            await status_msg.edit_text("✅ Очистка завершена! Удаленных аккаунтов среди администраторов не найдено.\n\n🛡 Авто-бан активен: если удаленный аккаунт напишет сообщение, бот сразу забанит его!")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка при сканировании: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {e}")
 
 
-# 2. АВТО-БАН УДАЛЕННЫХ АККАУНТОВ ПРИ ЛЮБОЙ АКТИВНОСТИ В ЧАТЕ
+# АВТО-БАН УДАЛЕННЫХ АККАУНТОВ ПРИ АКТИВНОСТИ
 @dp.message(F.from_user.first_name == "Deleted Account")
 async def auto_ban_deleted_users(message: types.Message):
     user = message.from_user
@@ -528,7 +531,7 @@ async def text_mute(message: types.Message):
 
     try:
         await message.chat.restrict(
-            user_id=target_user.id,
+             user_id=target_user.id,
             permissions=ChatPermissions(can_send_messages=False),
             until_date=until_date
         )
@@ -576,3 +579,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+                        
